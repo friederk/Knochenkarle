@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <title>Knochenkarle – Schulden & Runden</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <style>
+    body { font-family: system-ui, Arial, sans-serif; margin: 24px; max-width: 1000px; }
+    h1 { margin-bottom: 6px; }
+    h2 { margin-top: 28px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+    th, td { padding: 8px; border-bottom: 1px solid #ddd; }
+    input, select, button {
+      padding: 8px;
+      font-size: 14px;
+      margin: 2px 0;
+    }
+    button { cursor: pointer; }
+    .pill { padding: 4px 10px; border: 1px solid #ccc; border-radius: 999px; }
+    .primary { background: #eef3ff; border: 1px solid #99f; }
+    .danger { background: #ffecec; border: 1px solid #d88; }
+    .muted { color: #666; font-size: 13px; }
+  </style>
+</head>
+
+<body>
+
+<h1>Knochekarle</h1>
+
+<div>
+  Spieleranzahl:
+  <select id="playerCount">
+    <option>2</option><option>3</option><option selected>4</option><option>5</option><option>6</option>
+  </select>
+</div>
+
+<h2>Spieler</h2>
+<table>
+  <thead>
+    <tr><th>Name</th><th>Schulden (€)</th></tr>
+  </thead>
+  <tbody id="players"></tbody>
+</table>
+
+<h2>Runden-Einstellungen</h2>
+<table>
+  <thead>
+    <tr>
+      <th>#</th>
+      <th>Regel</th>
+      <th>Typ</th>
+      <th>Betrag(e)</th>
+    </tr>
+  </thead>
+  <tbody id="roundSetup"></tbody>
+</table>
+
+<button id="addRound">+ Runde hinzufügen</button>
+
+<h2>Aktuelle Runde</h2>
+<div id="currentRound"></div>
+
+<button id="applyRound" class="primary">Runde auswerten</button>
+
+<div style="margin-top: 10px;">
+  Runde:
+  <span id="roundIndex" class="pill">1</span>
+</div>
+
+<button id="resetAll" class="danger" style="margin-top: 20px;">
+  Alles zurücksetzen
+</button>
+
+<script>
+  // Comments in English as requested
+
+  const STORAGE_KEY = "card_game_final_v1";
+
+  function load() {
+    try { return JSON.parse(localStorage.getItem(STORAGE_KEY)); }
+    catch { return null; }
+  }
+
+  function save(state) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  }
+
+  function defaultState(count = 4) {
+    return {
+      players: Array.from({ length: count }, (_, i) => ({
+        name: `Spieler ${i + 1}`,
+        debt: 0
+      })),
+      rounds: [
+        { name: "Letzter Stich", type: "ONE", amount: 0.5 },
+        { name: "Damen", type: "COUNT", amount: 0.5 },
+        { name: "Herz", type: "COUNT", amount: 0.5 },
+        { name: "Knochekarle", type: "ONE", amount: 2.5 },
+        { name: "Endrunde", type: "PODIUM", amount: 5, amount2: 4 }
+      ],
+      currentRound: 0
+    };
+  }
+
+  let state = load() ?? defaultState(4);
+  save(state);
+
+  const playersEl = document.getElementById("players");
+  const setupEl = document.getElementById("roundSetup");
+  const currentEl = document.getElementById("currentRound");
+  const roundIndexEl = document.getElementById("roundIndex");
+
+  function renderPlayers() {
+    playersEl.innerHTML = "";
+    state.players.forEach(p => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td><input value="${p.name}"></td>
+        <td>${p.debt.toFixed(2)}</td>
+      `;
+      tr.querySelector("input").oninput = e => {
+        p.name = e.target.value;
+        save(state);
+        render();
+      };
+      playersEl.appendChild(tr);
+    });
+  }
+
+  function renderSetup() {
+    setupEl.innerHTML = "";
+    state.rounds.forEach((r, i) => {
+      const tr = document.createElement("tr");
+
+      tr.innerHTML = `
+        <td>${i + 1}</td>
+        <td><input value="${r.name}"></td>
+        <td>
+          <select>
+            <option value="ONE" ${r.type === "ONE" ? "selected" : ""}>Ein Verlierer</option>
+            <option value="COUNT" ${r.type === "COUNT" ? "selected" : ""}>Pro Ereignis</option>
+            <option value="PODIUM" ${r.type === "PODIUM" ? "selected" : ""}>Endrunde (1. & 2. Platz)</option>
+          </select>
+        </td>
+        <td></td>
+      `;
+
+      const amountCell = tr.children[3];
+
+      if (r.type === "PODIUM") {
+        amountCell.innerHTML = `
+          1.: <input type="number" step="0.01" value="${r.amount}">
+          2.: <input type="number" step="0.01" value="${r.amount2 ?? 0}">
+        `;
+        const inputs = amountCell.querySelectorAll("input");
+        inputs[0].oninput = () => r.amount = Number(inputs[0].value);
+        inputs[1].oninput = () => r.amount2 = Number(inputs[1].value);
+      } else {
+        amountCell.innerHTML = `
+          <input type="number" step="0.01" value="${r.amount}">
+        `;
+        amountCell.querySelector("input").oninput = e => r.amount = Number(e.target.value);
+      }
+
+      const [nameInput, typeSelect] = tr.querySelectorAll("input, select");
+      nameInput.oninput = () => r.name = nameInput.value;
+      typeSelect.onchange = () => {
+        r.type = typeSelect.value;
+        save(state);
+        render();
+      };
+
+      setupEl.appendChild(tr);
+    });
+  }
+
+  function renderCurrentRound() {
+    currentEl.innerHTML = "";
+
+    if (state.currentRound >= state.rounds.length) {
+      currentEl.innerHTML = "<strong>Alle Runden abgeschlossen.</strong>";
+      return;
+    }
+
+    const r = state.rounds[state.currentRound];
+    roundIndexEl.textContent = state.currentRound + 1;
+
+    if (r.type === "ONE") {
+      const sel = document.createElement("select");
+      state.players.forEach((p, i) => {
+        const o = document.createElement("option");
+        o.value = i;
+        o.textContent = p.name;
+        sel.appendChild(o);
+      });
+      currentEl.append("Verlierer: ", sel);
+      currentEl._loser = sel;
+    }
+
+    if (r.type === "COUNT") {
+      const table = document.createElement("table");
+      state.players.forEach(p => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td>${p.name}</td><td><input type="number" value="0"></td>`;
+        table.appendChild(tr);
+      });
+      currentEl.append(table);
+      currentEl._counts = table.querySelectorAll("input");
+    }
+
+    if (r.type === "PODIUM") {
+      const sel1 = document.createElement("select");
+      const sel2 = document.createElement("select");
+
+      state.players.forEach((p, i) => {
+        const o1 = document.createElement("option");
+        o1.value = i;
+        o1.textContent = p.name;
+        sel1.appendChild(o1);
+
+        const o2 = document.createElement("option");
+        o2.value = i;
+        o2.textContent = p.name;
+        sel2.appendChild(o2);
+      });
+
+      currentEl.append("1. Platz: ", sel1, document.createElement("br"));
+      currentEl.append("2. Platz: ", sel2);
+
+      currentEl._first = sel1;
+      currentEl._second = sel2;
+    }
+  }
+
+  document.getElementById("applyRound").onclick = () => {
+    const r = state.rounds[state.currentRound];
+    if (!r) return;
+
+    if (r.type === "ONE") {
+      state.players[currentEl._loser.value].debt += r.amount;
+    }
+
+    if (r.type === "COUNT") {
+      currentEl._counts.forEach((inp, i) => {
+        state.players[i].debt += Number(inp.value) * r.amount;
+      });
+    }
+
+    if (r.type === "PODIUM") {
+      const a = Number(currentEl._first.value);
+      const b = Number(currentEl._second.value);
+      if (a === b) {
+        alert("1. und 2. Platz dürfen nicht gleich sein.");
+        return;
+      }
+      state.players[a].debt -= r.amount;
+      state.players[b].debt -= r.amount2;
+    }
+
+    state.currentRound++;
+    save(state);
+    render();
+  };
+
+  document.getElementById("addRound").onclick = () => {
+    state.rounds.push({ name: "Neue Runde", type: "ONE", amount: 0.5 });
+    save(state);
+    render();
+  };
+
+  document.getElementById("resetAll").onclick = () => {
+    if (!confirm("Alles wirklich zurücksetzen?")) return;
+    state = defaultState(state.players.length);
+    save(state);
+    render();
+  };
+
+  document.getElementById("playerCount").onchange = e => {
+    state = defaultState(Number(e.target.value));
+    save(state);
+    render();
+  };
+
+  function render() {
+    renderPlayers();
+    renderSetup();
+    renderCurrentRound();
+  }
+
+  render();
+</script>
+
+</body>
+</html>
