@@ -1,0 +1,735 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <title>Knochekarle</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <style>
+    :root { --bg-opacity: 0.22; }
+
+    body {
+      font-family: system-ui, Arial, sans-serif;
+      margin: 24px;
+      max-width: 1100px;
+      position: relative;
+      z-index: 0;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background-size: cover;
+      background-position: center;
+      background-repeat: no-repeat;
+      opacity: var(--bg-opacity);
+      z-index: -1;
+      pointer-events: none;
+    }
+
+    h1 { margin-bottom: 8px; }
+    h2 { margin-top: 26px; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 8px;
+      background: rgba(255,255,255,0.85);
+    }
+    th, td {
+      padding: 8px;
+      border-bottom: 1px solid #ddd;
+      vertical-align: middle;
+    }
+
+    input, select, button {
+      padding: 8px;
+      font-size: 14px;
+      margin: 2px 0;
+    }
+    input[type="number"] { width: 120px; }
+    input[type="url"] { width: 280px; }
+
+    button { cursor: pointer; }
+    .pill {
+      padding: 4px 10px;
+      border: 1px solid #ccc;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.85);
+    }
+    .primary { background: #eef3ff; border: 1px solid #99f; }
+    .danger  { background: #ffecec; border: 1px solid #d88; }
+    .muted   { color: #666; font-size: 13px; }
+
+    .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    .row > * { margin: 4px 0; }
+
+    .card {
+      border: 1px solid #ddd;
+      border-radius: 12px;
+      padding: 12px;
+      background: rgba(255,255,255,0.85);
+      margin-top: 10px;
+    }
+    .spacer { flex: 1; }
+    .mini { font-size: 12px; }
+  </style>
+</head>
+
+<body>
+  <h1>Knochekarle</h1>
+
+  <div class="row card">
+    <div>
+      Spieleranzahl:
+      <select id="playerCount"></select>
+    </div>
+
+    <div class="spacer"></div>
+
+    <div>
+      Runde:
+      <span id="roundIndex" class="pill">1</span>
+    </div>
+
+    <button id="resetAll" class="danger">Alles zurücksetzen</button>
+  </div>
+
+  <div class="card">
+    <h2>Spieler</h2>
+    <datalist id="playerNameMemory"></datalist>
+    <table>
+      <thead>
+        <tr><th>Name</th><th>PayPal-Link</th><th>Schulden (€)</th></tr>
+      </thead>
+      <tbody id="players"></tbody>
+      <tfoot>
+        <tr>
+          <td><strong>Summe</strong></td>
+          <td></td>
+          <td id="sumCell"><strong>0.00</strong></td>
+        </tr>
+      </tfoot>
+    </table>
+    <div class="muted mini">Gewinne sind negative Werte (Schulden werden kleiner).</div>
+  </div>
+
+  <div class="card">
+    <h2>Runden-Einstellungen</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Regel</th>
+          <th>Typ</th>
+          <th>Betrag(e)</th>
+        </tr>
+      </thead>
+      <tbody id="roundSetup"></tbody>
+    </table>
+    <button id="addRound">+ Runde hinzufügen</button>
+  </div>
+
+  <div class="card">
+    <h2>Aktuelle Runde</h2>
+    <div id="currentRound"></div>
+    <div class="row" style="margin-top:10px;">
+      <button id="applyRound" class="primary">Runde auswerten</button>
+      <button id="prevRound">← zurück</button>
+      <button id="nextRound">weiter →</button>
+    </div>
+    <div class="muted mini" style="margin-top:8px;">
+      Tipp: Du kannst mit „zurück“/„weiter“ navigieren, aber Auswerten zählt erst beim Klick auf „Runde auswerten“.
+    </div>
+  </div>
+
+  <!-- Background menu at bottom + collapsible -->
+  <div class="card" id="bgCard">
+    <div class="row" style="align-items:center;">
+      <h2 style="margin:0;">Hintergrundbild</h2>
+
+      <div class="spacer"></div>
+
+      <button id="bgToggle" title="Ein-/ausklappen" aria-expanded="true">–</button>
+    </div>
+
+    <div id="bgPanel" style="margin-top:10px;">
+      <div class="row">
+        <input id="bgFile" type="file" accept="image/*" />
+        <label class="mini">Transparenz:
+          <input id="bgOpacity" type="range" min="0" max="0.6" step="0.01" />
+          <span id="bgOpacityVal" class="pill"></span>
+        </label>
+        <button id="bgRemove" class="danger">Hintergrund entfernen</button>
+      </div>
+
+      <div class="muted mini">
+        Hinweis: Das Bild wird lokal im Browser gespeichert (kann je nach Bildgröße Speicher belegen).
+      </div>
+    </div>
+  </div>
+
+<script>
+  // Comments in English as requested.
+
+  // If you already used an older version, changing the key forces a fresh default background for everyone.
+  const STORAGE_KEY = "knochekarle_v1";
+  const PLAYER_MEMORY_KEY = "knochekarle_player_memory_v1";
+  const MIN_PLAYERS = 2;
+  const MAX_PLAYERS = 12;
+
+  function load() {
+    try { return JSON.parse(localStorage.getItem(STORAGE_KEY)); }
+    catch { return null; }
+  }
+
+  function save(state) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  }
+
+  function loadPlayerMemory() {
+    try { return JSON.parse(localStorage.getItem(PLAYER_MEMORY_KEY)); }
+    catch { return null; }
+  }
+
+  function savePlayerMemory(memory) {
+    localStorage.setItem(PLAYER_MEMORY_KEY, JSON.stringify(memory));
+  }
+
+  function defaultState(count = 4) {
+    return {
+      players: Array.from({ length: count }, (_, i) => ({
+        name: `Spieler ${i + 1}`,
+        debt: 0,
+        paypal: ""
+      })),
+      rounds: [
+        { name: "Letzter Stich", type: "ONE", amount: 0.5, amount2: 0 },
+        { name: "Damen", type: "COUNT", amount: 0.5, amount2: 0 },
+        { name: "Herz", type: "COUNT", amount: 0.5, amount2: 0 },
+        { name: "Knochekarle", type: "ONE", amount: 2.5, amount2: 0 },
+        { name: "Endrunde", type: "PODIUM", amount: 5, amount2: 4 }
+      ],
+      currentRound: 0,
+
+      // IMPORTANT: Put background.jpeg in the same folder as index.html (repo root).
+      // If you rename the file, update this path accordingly.
+      bg: { dataUrl: "background.jpeg", opacity: 0.6, collapsed: true }
+    };
+  }
+
+  function clampInt(n, min, max) {
+    n = Number(n);
+    if (!Number.isFinite(n)) return min;
+    return Math.min(max, Math.max(min, Math.trunc(n)));
+  }
+
+  function ensureState(s) {
+    const playerCount = clampInt(s?.players?.length ?? 4, MIN_PLAYERS, MAX_PLAYERS);
+    const st = (s && typeof s === "object") ? s : defaultState(4);
+
+    // Players
+    const players = Array.isArray(st.players) ? st.players.slice(0, playerCount) : [];
+    while (players.length < playerCount) {
+      players.push({ name: `Spieler ${players.length + 1}`, debt: 0, paypal: "" });
+    }
+    for (let i = 0; i < players.length; i++) {
+      const p = players[i] ?? {};
+      players[i] = {
+        name: String(p.name ?? `Spieler ${i + 1}`),
+        debt: Number.isFinite(Number(p.debt)) ? Number(p.debt) : 0,
+        paypal: String(p.paypal ?? "")
+      };
+    }
+
+    // Rounds
+    const rounds = Array.isArray(st.rounds) ? st.rounds : [];
+    const normalizedRounds = rounds.map(r => ({
+      name: String(r?.name ?? "Runde"),
+      type: (r?.type === "ONE" || r?.type === "COUNT" || r?.type === "PODIUM") ? r.type : "ONE",
+      amount: Number.isFinite(Number(r?.amount)) ? Number(r.amount) : 0,
+      amount2: Number.isFinite(Number(r?.amount2)) ? Number(r.amount2) : 0
+    }));
+
+    // Current round
+    const currentRound = clampInt(st.currentRound ?? 0, 0, Math.max(0, normalizedRounds.length));
+
+    // Background
+    const bgFallback = { dataUrl: "background.jpeg", opacity: 0.22, collapsed: true };
+    const bg = (st.bg && typeof st.bg === "object") ? st.bg : bgFallback;
+    const opacity = Number(bg.opacity);
+
+    const bgState = {
+      dataUrl: (typeof bg.dataUrl === "string" && bg.dataUrl.length) ? bg.dataUrl : bgFallback.dataUrl,
+      opacity: Number.isFinite(opacity) ? Math.min(0.6, Math.max(0, opacity)) : bgFallback.opacity,
+      collapsed: Boolean(bg.collapsed)
+    };
+
+    return {
+      players,
+      rounds: normalizedRounds.length ? normalizedRounds : defaultState(playerCount).rounds,
+      currentRound,
+      bg: bgState
+    };
+  }
+
+  let state = ensureState(load() ?? defaultState(4));
+  save(state);
+
+  let playerMemory = loadPlayerMemory() ?? {};
+  savePlayerMemory(playerMemory);
+
+  // DOM
+  const playerCountEl = document.getElementById("playerCount");
+  const playersEl = document.getElementById("players");
+  const setupEl = document.getElementById("roundSetup");
+  const currentEl = document.getElementById("currentRound");
+  const roundIndexEl = document.getElementById("roundIndex");
+  const sumCellEl = document.getElementById("sumCell");
+
+  const bgFileEl = document.getElementById("bgFile");
+  const bgOpacityEl = document.getElementById("bgOpacity");
+  const bgOpacityValEl = document.getElementById("bgOpacityVal");
+  const bgRemoveEl = document.getElementById("bgRemove");
+  const bgToggleEl = document.getElementById("bgToggle");
+  const bgPanelEl = document.getElementById("bgPanel");
+
+  const applyRoundEl = document.getElementById("applyRound");
+  const addRoundEl = document.getElementById("addRound");
+  const resetAllEl = document.getElementById("resetAll");
+  const prevRoundEl = document.getElementById("prevRound");
+  const nextRoundEl = document.getElementById("nextRound");
+
+  let bgStyleTag = null;
+
+  function ensureBgRule(clear = false) {
+    if (!bgStyleTag) {
+      bgStyleTag = document.createElement("style");
+      document.head.appendChild(bgStyleTag);
+    }
+    if (clear || !state.bg.dataUrl) {
+      bgStyleTag.textContent = `body::before { background-image: none; }`;
+      return;
+    }
+    bgStyleTag.textContent = `body::before { background-image: url("${state.bg.dataUrl}"); }`;
+  }
+
+  function setBackgroundFromState() {
+    document.documentElement.style.setProperty("--bg-opacity", String(state.bg.opacity));
+    bgOpacityEl.value = String(state.bg.opacity);
+    bgOpacityValEl.textContent = state.bg.opacity.toFixed(2);
+
+    if (state.bg.dataUrl) ensureBgRule(false);
+    else ensureBgRule(true);
+  }
+
+  function applyBgPanelState() {
+    const collapsed = Boolean(state.bg.collapsed);
+    bgPanelEl.style.display = collapsed ? "none" : "block";
+    bgToggleEl.textContent = collapsed ? "+" : "–";
+    bgToggleEl.setAttribute("aria-expanded", collapsed ? "false" : "true");
+  }
+
+  function computeSum() {
+    return state.players.reduce((acc, p) => acc + (Number(p.debt) || 0), 0);
+  }
+
+  function renderPlayerCountOptions() {
+    playerCountEl.innerHTML = "";
+    for (let n = MIN_PLAYERS; n <= MAX_PLAYERS; n++) {
+      const opt = document.createElement("option");
+      opt.value = String(n);
+      opt.textContent = String(n);
+      if (n === state.players.length) opt.selected = true;
+      playerCountEl.appendChild(opt);
+    }
+  }
+
+  // Focus-safe player rendering: no full re-render on each keystroke.
+  function normalizePlayerName(name) {
+    return String(name ?? "").trim();
+  }
+
+  function setMemoryEntry(name, paypal) {
+    const trimmed = normalizePlayerName(name);
+    if (!trimmed) return;
+    playerMemory[trimmed] = { paypal: String(paypal ?? "") };
+    savePlayerMemory(playerMemory);
+    renderMemoryDatalist();
+  }
+
+  function renderMemoryDatalist() {
+    const datalist = document.getElementById("playerNameMemory");
+    if (!datalist) return;
+    datalist.innerHTML = "";
+    Object.keys(playerMemory)
+      .sort((a, b) => a.localeCompare(b))
+      .forEach(name => {
+        const option = document.createElement("option");
+        option.value = name;
+        datalist.appendChild(option);
+      });
+  }
+
+  function applyMemoryToPlayer(index, nameInput, paypalInput) {
+    const trimmed = normalizePlayerName(nameInput.value);
+    if (!trimmed) return;
+    const memory = playerMemory[trimmed];
+    if (memory?.paypal && !state.players[index].paypal) {
+      state.players[index].paypal = memory.paypal;
+      paypalInput.value = memory.paypal;
+      save(state);
+    }
+  }
+
+  function renderPlayers() {
+    playersEl.innerHTML = "";
+    state.players.forEach((p, idx) => {
+      const tr = document.createElement("tr");
+
+      const tdName = document.createElement("td");
+      const inp = document.createElement("input");
+      inp.setAttribute("list", "playerNameMemory");
+      inp.value = p.name;
+
+      const tdPaypal = document.createElement("td");
+      const paypalInp = document.createElement("input");
+      paypalInp.type = "url";
+      paypalInp.placeholder = "https://paypal.me/...";
+      paypalInp.value = p.paypal ?? "";
+
+      inp.addEventListener("input", () => {
+        state.players[idx].name = inp.value;
+        save(state);
+      });
+
+      inp.addEventListener("blur", () => {
+        applyMemoryToPlayer(idx, inp, paypalInp);
+        setMemoryEntry(inp.value, paypalInp.value);
+        renderCurrentRound();
+      });
+
+      tdName.appendChild(inp);
+
+      paypalInp.addEventListener("input", () => {
+        state.players[idx].paypal = paypalInp.value;
+        save(state);
+      });
+
+      paypalInp.addEventListener("blur", () => {
+        setMemoryEntry(inp.value, paypalInp.value);
+      });
+
+      tdPaypal.appendChild(paypalInp);
+
+      const tdDebt = document.createElement("td");
+      tdDebt.textContent = p.debt.toFixed(2);
+
+      tr.appendChild(tdName);
+      tr.appendChild(tdPaypal);
+      tr.appendChild(tdDebt);
+      playersEl.appendChild(tr);
+    });
+
+    sumCellEl.innerHTML = `<strong>${computeSum().toFixed(2)}</strong>`;
+  }
+
+  function renderSetup() {
+    setupEl.innerHTML = "";
+    state.rounds.forEach((r, i) => {
+      const tr = document.createElement("tr");
+
+      const tdIdx = document.createElement("td");
+      tdIdx.textContent = String(i + 1);
+
+      const tdName = document.createElement("td");
+      const nameInp = document.createElement("input");
+      nameInp.value = r.name;
+
+      nameInp.addEventListener("input", () => {
+        r.name = nameInp.value;
+        save(state);
+      });
+
+      nameInp.addEventListener("blur", () => {
+        renderCurrentRound();
+      });
+
+      tdName.appendChild(nameInp);
+
+      const tdType = document.createElement("td");
+      const sel = document.createElement("select");
+      sel.innerHTML = `
+        <option value="ONE">Ein Verlierer</option>
+        <option value="COUNT">Pro Ereignis</option>
+        <option value="PODIUM">Endrunde (1. & 2. Platz)</option>
+      `;
+      sel.value = r.type;
+
+      sel.addEventListener("change", () => {
+        r.type = sel.value;
+        if (r.type === "PODIUM" && !Number.isFinite(Number(r.amount2))) r.amount2 = 0;
+        save(state);
+        renderSetup();
+        renderCurrentRound();
+      });
+
+      tdType.appendChild(sel);
+
+      const tdAmount = document.createElement("td");
+      if (r.type === "PODIUM") {
+        const a1 = document.createElement("input");
+        a1.type = "number"; a1.step = "0.01"; a1.value = String(r.amount);
+        const a2 = document.createElement("input");
+        a2.type = "number"; a2.step = "0.01"; a2.value = String(r.amount2 ?? 0);
+
+        a1.addEventListener("input", () => { r.amount = Number(a1.value); save(state); });
+        a2.addEventListener("input", () => { r.amount2 = Number(a2.value); save(state); });
+
+        tdAmount.append("1.: ", a1, "  2.: ", a2);
+      } else {
+        const a = document.createElement("input");
+        a.type = "number"; a.step = "0.01"; a.value = String(r.amount);
+        a.addEventListener("input", () => { r.amount = Number(a.value); save(state); });
+        tdAmount.appendChild(a);
+      }
+
+      tr.appendChild(tdIdx);
+      tr.appendChild(tdName);
+      tr.appendChild(tdType);
+      tr.appendChild(tdAmount);
+      setupEl.appendChild(tr);
+    });
+  }
+
+  function renderCurrentRound() {
+    currentEl.innerHTML = "";
+
+    if (state.currentRound >= state.rounds.length) {
+      roundIndexEl.textContent = String(state.rounds.length);
+      currentEl.innerHTML = "<strong>Alle Runden abgeschlossen.</strong>";
+      applyRoundEl.disabled = true;
+      return;
+    }
+
+    applyRoundEl.disabled = false;
+    const r = state.rounds[state.currentRound];
+    roundIndexEl.textContent = String(state.currentRound + 1);
+
+    const title = document.createElement("div");
+    title.innerHTML = `<strong>${r.name}</strong> <span class="muted">(${r.type})</span>`;
+    currentEl.appendChild(title);
+
+    if (r.type === "ONE") {
+      const wrap = document.createElement("div");
+      wrap.className = "row";
+
+      const sel = document.createElement("select");
+      state.players.forEach((p, i) => {
+        const o = document.createElement("option");
+        o.value = String(i);
+        o.textContent = p.name;
+        sel.appendChild(o);
+      });
+
+      wrap.append("Verlierer: ", sel, document.createTextNode(`  Betrag: ${Number(r.amount).toFixed(2)} €`));
+      currentEl.appendChild(wrap);
+      currentEl._loser = sel;
+    }
+
+    if (r.type === "COUNT") {
+      const table = document.createElement("table");
+      const tb = document.createElement("tbody");
+
+      state.players.forEach((p) => {
+        const tr = document.createElement("tr");
+        const td1 = document.createElement("td");
+        td1.textContent = p.name;
+        const td2 = document.createElement("td");
+        const inp = document.createElement("input");
+        inp.type = "number";
+        inp.value = "0";
+        td2.appendChild(inp);
+        tr.appendChild(td1);
+        tr.appendChild(td2);
+        tb.appendChild(tr);
+      });
+
+      table.appendChild(tb);
+      currentEl.appendChild(document.createTextNode(`Betrag pro Ereignis: ${Number(r.amount).toFixed(2)} €`));
+      currentEl.appendChild(table);
+      currentEl._counts = table.querySelectorAll("input");
+    }
+
+    if (r.type === "PODIUM") {
+      const row1 = document.createElement("div");
+      row1.className = "row";
+      const row2 = document.createElement("div");
+      row2.className = "row";
+
+      const sel1 = document.createElement("select");
+      const sel2 = document.createElement("select");
+
+      state.players.forEach((p, i) => {
+        const o1 = document.createElement("option");
+        o1.value = String(i);
+        o1.textContent = p.name;
+        sel1.appendChild(o1);
+
+        const o2 = document.createElement("option");
+        o2.value = String(i);
+        o2.textContent = p.name;
+        sel2.appendChild(o2);
+      });
+
+      row1.append("1. Platz: ", sel1, document.createTextNode(`  Gewinn: ${Number(r.amount).toFixed(2)} €`));
+      row2.append("2. Platz: ", sel2, document.createTextNode(`  Gewinn: ${Number(r.amount2 ?? 0).toFixed(2)} €`));
+
+      const hint = document.createElement("div");
+      hint.className = "muted mini";
+      hint.textContent = "Gewinn reduziert Schulden (wird als negativer Betrag verbucht).";
+
+      currentEl.appendChild(row1);
+      currentEl.appendChild(row2);
+      currentEl.appendChild(hint);
+
+      currentEl._first = sel1;
+      currentEl._second = sel2;
+    }
+  }
+
+  function applyRound() {
+    if (state.currentRound >= state.rounds.length) return;
+    const r = state.rounds[state.currentRound];
+
+    if (r.type === "ONE") {
+      const idx = Number(currentEl._loser.value);
+      if (!Number.isInteger(idx)) return;
+      state.players[idx].debt += (Number(r.amount) || 0);
+    }
+
+    if (r.type === "COUNT") {
+      currentEl._counts.forEach((inp, i) => {
+        const count = Number(inp.value);
+        const a = Number(r.amount) || 0;
+        if (Number.isFinite(count)) state.players[i].debt += count * a;
+      });
+    }
+
+    if (r.type === "PODIUM") {
+      const a = Number(currentEl._first.value);
+      const b = Number(currentEl._second.value);
+      if (a === b) {
+        alert("1. und 2. Platz dürfen nicht gleich sein.");
+        return;
+      }
+      state.players[a].debt -= (Number(r.amount) || 0);
+      state.players[b].debt -= (Number(r.amount2) || 0);
+    }
+
+    state.currentRound++;
+    save(state);
+    renderPlayers();
+    renderCurrentRound();
+  }
+
+  // Background events
+  bgOpacityEl.addEventListener("input", () => {
+    state.bg.opacity = Number(bgOpacityEl.value);
+    save(state);
+    setBackgroundFromState();
+  });
+
+  bgRemoveEl.addEventListener("click", () => {
+    state.bg.dataUrl = null;
+    save(state);
+    setBackgroundFromState();
+  });
+
+  bgFileEl.addEventListener("change", () => {
+    const file = bgFileEl.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      state.bg.dataUrl = String(reader.result);
+      save(state);
+      setBackgroundFromState();
+      applyBgPanelState();
+      bgFileEl.value = "";
+    };
+    reader.readAsDataURL(file);
+  });
+
+  bgToggleEl.addEventListener("click", () => {
+    state.bg.collapsed = !state.bg.collapsed;
+    save(state);
+    applyBgPanelState();
+  });
+
+  // Other events
+  playerCountEl.addEventListener("change", () => {
+    const n = clampInt(playerCountEl.value, MIN_PLAYERS, MAX_PLAYERS);
+
+    const oldPlayers = state.players.slice();
+    const newPlayers = Array.from({ length: n }, (_, i) => {
+      if (i < oldPlayers.length) return { ...oldPlayers[i] };
+      return { name: `Spieler ${i + 1}`, debt: 0, paypal: "" };
+    });
+
+    state.players = newPlayers;
+    save(state);
+
+    renderPlayerCountOptions();
+    renderPlayers();
+    renderSetup();
+    renderCurrentRound();
+  });
+
+  addRoundEl.addEventListener("click", () => {
+    state.rounds.push({ name: "Neue Runde", type: "ONE", amount: 0.5, amount2: 0 });
+    save(state);
+    renderSetup();
+    renderCurrentRound();
+  });
+
+  resetAllEl.addEventListener("click", () => {
+    if (!confirm("Alles wirklich zurücksetzen? (Spieler, Schulden, Runden, Hintergrund)")) return;
+    state = defaultState(state.players.length);
+    save(state);
+    init();
+  });
+
+  applyRoundEl.addEventListener("click", applyRound);
+
+  prevRoundEl.addEventListener("click", () => {
+    state.currentRound = Math.max(0, state.currentRound - 1);
+    save(state);
+    renderCurrentRound();
+  });
+
+  nextRoundEl.addEventListener("click", () => {
+    state.currentRound = Math.min(state.rounds.length, state.currentRound + 1);
+    save(state);
+    renderCurrentRound();
+  });
+
+  function init() {
+    state = ensureState(state);
+    save(state);
+    playerMemory = loadPlayerMemory() ?? {};
+    renderMemoryDatalist();
+
+    renderPlayerCountOptions();
+    setBackgroundFromState();
+    applyBgPanelState();
+    renderPlayers();
+    renderSetup();
+    renderCurrentRound();
+  }
+
+  init();
+</script>
+</body>
+</html>
