@@ -74,6 +74,40 @@
     }
     .spacer { flex: 1; }
     .mini { font-size: 12px; }
+
+    body.paypal-collapsed .paypal-col {
+      display: none;
+    }
+
+    #settlementCard table td:nth-child(3),
+    #settlementCard table th:nth-child(3) {
+      text-align: right;
+    }
+    #settlementCard table td:nth-child(4),
+    #settlementCard table th:nth-child(4) {
+      text-align: center;
+    }
+    #settlementEmpty { margin-top: 6px; }
+
+    @media (max-width: 720px) {
+      body { margin: 12px; }
+      h1 { font-size: 24px; }
+      h2 { font-size: 18px; }
+      .card { padding: 10px; }
+      table { font-size: 14px; }
+      input, select, button { width: 100%; }
+      input[type="number"] { width: 100%; }
+      input[type="url"] { width: 100%; }
+      .row { gap: 8px; }
+      .row > * { margin: 2px 0; }
+      th.amount-col,
+      td.amount-col {
+        width: 90px;
+      }
+      td.amount-col input[type="number"] {
+        min-width: 0;
+      }
+    }
   </style>
 </head>
 
@@ -97,21 +131,27 @@
   </div>
 
   <div class="card">
-    <h2>Spieler</h2>
+    <div class="row">
+      <h2 style="margin:0;">Spieler</h2>
+      <div class="spacer"></div>
+      <button id="paypalToggle" class="pill" type="button">PayPal einblenden</button>
+    </div>
     <datalist id="playerNameMemory"></datalist>
-    <table>
+    <div class="table-wrap">
+      <table>
       <thead>
-        <tr><th>Name</th><th>PayPal-Link</th><th>Schulden (€)</th></tr>
+        <tr><th>Name</th><th class="paypal-col">PayPal-Link</th><th>Schulden (€)</th></tr>
       </thead>
       <tbody id="players"></tbody>
       <tfoot>
         <tr>
           <td><strong>Summe</strong></td>
-          <td></td>
+          <td class="paypal-col"></td>
           <td id="sumCell"><strong>0.00</strong></td>
         </tr>
       </tfoot>
-    </table>
+      </table>
+    </div>
     <div class="muted mini">Gewinne sind negative Werte (Schulden werden kleiner).</div>
   </div>
 
@@ -123,7 +163,7 @@
           <th>#</th>
           <th>Regel</th>
           <th>Typ</th>
-          <th>Betrag(e)</th>
+          <th class="amount-col">Betrag(e)</th>
         </tr>
       </thead>
       <tbody id="roundSetup"></tbody>
@@ -141,6 +181,28 @@
     </div>
     <div class="muted mini" style="margin-top:8px;">
       Tipp: Du kannst mit „zurück“/„weiter“ navigieren, aber Auswerten zählt erst beim Klick auf „Runde auswerten“.
+    </div>
+  </div>
+
+  <div class="card" id="settlementCard">
+    <div class="row" style="align-items:center;">
+      <h2 style="margin:0;">Ausgleichszahlungen</h2>
+      <div class="spacer"></div>
+      <div id="settlementSummary" class="muted mini"></div>
+    </div>
+    <div id="settlementEmpty" class="muted mini">Keine Ausgleichszahlungen nötig.</div>
+    <div class="table-wrap">
+      <table id="settlementTable">
+        <thead>
+          <tr>
+            <th>Von</th>
+            <th>An</th>
+            <th>Betrag (€)</th>
+            <th>PayPal</th>
+          </tr>
+        </thead>
+        <tbody id="settlementBody"></tbody>
+      </table>
     </div>
   </div>
 
@@ -212,10 +274,10 @@
         { name: "Endrunde", type: "PODIUM", amount: 5, amount2: 4 }
       ],
       currentRound: 0,
-
       // IMPORTANT: Put background.jpeg in the same folder as index.html (repo root).
       // If you rename the file, update this path accordingly.
-      bg: { dataUrl: "background.jpeg", opacity: 0.6, collapsed: true }
+      bg: { dataUrl: "background.jpeg", opacity: 0.6, collapsed: true },
+      ui: { paypalCollapsed: true }
     };
   }
 
@@ -270,7 +332,10 @@
       players,
       rounds: normalizedRounds.length ? normalizedRounds : defaultState(playerCount).rounds,
       currentRound,
-      bg: bgState
+      bg: bgState,
+      ui: {
+        paypalCollapsed: Boolean(st.ui?.paypalCollapsed)
+      }
     };
   }
 
@@ -294,6 +359,11 @@
   const bgRemoveEl = document.getElementById("bgRemove");
   const bgToggleEl = document.getElementById("bgToggle");
   const bgPanelEl = document.getElementById("bgPanel");
+  const paypalToggleEl = document.getElementById("paypalToggle");
+  const settlementTableEl = document.getElementById("settlementTable");
+  const settlementBodyEl = document.getElementById("settlementBody");
+  const settlementEmptyEl = document.getElementById("settlementEmpty");
+  const settlementSummaryEl = document.getElementById("settlementSummary");
 
   const applyRoundEl = document.getElementById("applyRound");
   const addRoundEl = document.getElementById("addRound");
@@ -331,8 +401,41 @@
     bgToggleEl.setAttribute("aria-expanded", collapsed ? "false" : "true");
   }
 
+  function applyPaypalVisibility() {
+    const collapsed = Boolean(state.ui?.paypalCollapsed);
+    document.body.classList.toggle("paypal-collapsed", collapsed);
+    paypalToggleEl.textContent = collapsed ? "PayPal einblenden" : "PayPal ausblenden";
+  }
+
   function computeSum() {
     return state.players.reduce((acc, p) => acc + (Number(p.debt) || 0), 0);
+  }
+
+  function calculateSettlement(players) {
+    const debtors = [];   // owe money
+    const creditors = []; // are owed money
+    players.forEach(p => {
+      const val = Number(p.debt) || 0;
+      if (val > 0.009) debtors.push({ name: p.name, paypal: p.paypal, amount: val });
+      else if (val < -0.009) creditors.push({ name: p.name, paypal: p.paypal, amount: -val });
+    });
+
+    debtors.sort((a, b) => b.amount - a.amount);
+    creditors.sort((a, b) => b.amount - a.amount);
+
+    const transfers = [];
+    let i = 0, j = 0;
+    while (i < debtors.length && j < creditors.length) {
+      const payer = debtors[i];
+      const receiver = creditors[j];
+      const amount = Math.min(payer.amount, receiver.amount);
+      transfers.push({ from: payer, to: receiver, amount });
+      payer.amount -= amount;
+      receiver.amount -= amount;
+      if (payer.amount < 0.009) i++;
+      if (receiver.amount < 0.009) j++;
+    }
+    return transfers;
   }
 
   function renderPlayerCountOptions() {
@@ -394,6 +497,7 @@
       inp.value = p.name;
 
       const tdPaypal = document.createElement("td");
+      tdPaypal.className = "paypal-col";
       const paypalInp = document.createElement("input");
       paypalInp.type = "url";
       paypalInp.placeholder = "https://paypal.me/...";
@@ -433,6 +537,7 @@
     });
 
     sumCellEl.innerHTML = `<strong>${computeSum().toFixed(2)}</strong>`;
+    renderSettlement();
   }
 
   function renderSetup() {
@@ -478,6 +583,7 @@
       tdType.appendChild(sel);
 
       const tdAmount = document.createElement("td");
+      tdAmount.className = "amount-col";
       if (r.type === "PODIUM") {
         const a1 = document.createElement("input");
         a1.type = "number"; a1.step = "0.01"; a1.value = String(r.amount);
@@ -599,39 +705,46 @@
     }
   }
 
-  function applyRound() {
-    if (state.currentRound >= state.rounds.length) return;
-    const r = state.rounds[state.currentRound];
+  function renderSettlement() {
+    if (!settlementTableEl || !settlementBodyEl || !settlementEmptyEl || !settlementSummaryEl) return;
 
-    if (r.type === "ONE") {
-      const idx = Number(currentEl._loser.value);
-      if (!Number.isInteger(idx)) return;
-      state.players[idx].debt += (Number(r.amount) || 0);
+    const transfers = calculateSettlement(state.players);
+    const totalDebt = state.players.reduce((acc, p) => acc + Math.max(0, Number(p.debt) || 0), 0);
+    const totalCredit = state.players.reduce((acc, p) => acc + Math.max(0, -(Number(p.debt) || 0)), 0);
+    settlementSummaryEl.textContent = `Schulden: ${totalDebt.toFixed(2)} € • Guthaben: ${totalCredit.toFixed(2)} €`;
+
+    settlementBodyEl.innerHTML = "";
+    if (!transfers.length) {
+      settlementTableEl.style.display = "none";
+      settlementEmptyEl.style.display = "block";
+      return;
     }
 
-    if (r.type === "COUNT") {
-      currentEl._counts.forEach((inp, i) => {
-        const count = Number(inp.value);
-        const a = Number(r.amount) || 0;
-        if (Number.isFinite(count)) state.players[i].debt += count * a;
-      });
-    }
+    settlementTableEl.style.display = "table";
+    settlementEmptyEl.style.display = "none";
 
-    if (r.type === "PODIUM") {
-      const a = Number(currentEl._first.value);
-      const b = Number(currentEl._second.value);
-      if (a === b) {
-        alert("1. und 2. Platz dürfen nicht gleich sein.");
-        return;
+    transfers.forEach(t => {
+      const tr = document.createElement("tr");
+      const tdFrom = document.createElement("td");
+      tdFrom.textContent = t.from.name;
+      const tdTo = document.createElement("td");
+      tdTo.textContent = t.to.name;
+      const tdAmount = document.createElement("td");
+      tdAmount.textContent = `${t.amount.toFixed(2)} €`;
+      const tdPaypal = document.createElement("td");
+      if (t.to.paypal) {
+        const a = document.createElement("a");
+        a.href = t.to.paypal;
+        a.target = "_blank";
+        a.rel = "noopener";
+        a.textContent = "Link";
+        tdPaypal.appendChild(a);
+      } else {
+        tdPaypal.textContent = "–";
       }
-      state.players[a].debt -= (Number(r.amount) || 0);
-      state.players[b].debt -= (Number(r.amount2) || 0);
-    }
-
-    state.currentRound++;
-    save(state);
-    renderPlayers();
-    renderCurrentRound();
+      tr.append(tdFrom, tdTo, tdAmount, tdPaypal);
+      settlementBodyEl.appendChild(tr);
+    });
   }
 
   // Background events
@@ -667,6 +780,41 @@
     save(state);
     applyBgPanelState();
   });
+
+  function applyRound() {
+    if (state.currentRound >= state.rounds.length) return;
+    const r = state.rounds[state.currentRound];
+
+    if (r.type === "ONE") {
+      const idx = Number(currentEl._loser.value);
+      if (!Number.isInteger(idx)) return;
+      state.players[idx].debt += (Number(r.amount) || 0);
+    }
+
+    if (r.type === "COUNT") {
+      currentEl._counts.forEach((inp, i) => {
+        const count = Number(inp.value);
+        const a = Number(r.amount) || 0;
+        if (Number.isFinite(count)) state.players[i].debt += count * a;
+      });
+    }
+
+    if (r.type === "PODIUM") {
+      const a = Number(currentEl._first.value);
+      const b = Number(currentEl._second.value);
+      if (a === b) {
+        alert("1. und 2. Platz dürfen nicht gleich sein.");
+        return;
+      }
+      state.players[a].debt -= (Number(r.amount) || 0);
+      state.players[b].debt -= (Number(r.amount2) || 0);
+    }
+
+    state.currentRound++;
+    save(state);
+    renderPlayers();
+    renderCurrentRound();
+  }
 
   // Other events
   playerCountEl.addEventListener("change", () => {
@@ -715,6 +863,12 @@
     renderCurrentRound();
   });
 
+  paypalToggleEl.addEventListener("click", () => {
+    state.ui.paypalCollapsed = !state.ui.paypalCollapsed;
+    save(state);
+    applyPaypalVisibility();
+  });
+
   function init() {
     state = ensureState(state);
     save(state);
@@ -724,6 +878,7 @@
     renderPlayerCountOptions();
     setBackgroundFromState();
     applyBgPanelState();
+    applyPaypalVisibility();
     renderPlayers();
     renderSetup();
     renderCurrentRound();
@@ -733,3 +888,4 @@
 </script>
 </body>
 </html>
+
